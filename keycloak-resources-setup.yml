@@ -1,0 +1,184 @@
+---
+- name: 626 keycloak setup
+  hosts: nikthehostold
+  become: True
+  vars:
+   serverUrl: 18.237.142.14
+   keycloakPort: 8080
+   realm: weare626
+   masterUserName: admin
+   masterPassword: admin
+   group: testGroup
+   initialUserName: adminuser
+   initialPassword: testing
+   roleName: 626-admin
+   groupId: ""
+   userId: ""
+
+  tasks:
+  # ---------- keycloak setup ----------
+  - name: running keycloak container on docker
+    docker_container:
+      name: keycloak
+      image: jboss/keycloak
+      env:
+       KEYCLOAK_USER: "{{ masterUserName }}"
+       KEYCLOAK_PASSWORD: "{{ masterPassword }}"
+      published_ports:
+        - "{{ keycloakPort }}:{{ keycloakPort }}"
+        - 8443:8443
+    
+  # ------ pausing is required to wait keycloack service host properly (takes 2 min usually) -------
+  - name: Pausing so that keycloak service hosted properly
+    pause:
+      minutes: 2
+
+  # --- disabling ssl for keycloak access ---
+  - name: disabling https of master realm
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh config credentials --server http://localhost:{{ keycloakPort }}/auth --realm master --user {{ masterUserName }} --password {{ masterPassword }} && ./kcadm.sh update realms/master -s sslRequired=NONE'
+
+  # ----- logging in keycloak
+  - name: logging in admin-cli
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh config credentials --server http://{{ serverUrl }}:{{ keycloakPort }}/auth --realm master --user {{ masterUserName }} --password {{ masterPassword }}'
+
+  # ----- keycloak resources creation & setup -------
+  - name: creaing new realm in keycloak
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh create realms -s realm={{ realm }} -s enabled=true'
+
+  - name: disabling handling https in custom realm
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh update realms/{{ realm }} -s sslRequired=NONE'
+
+  - name: Create Keycloak client
+    community.general.keycloak_client:
+      auth_client_id: admin-cli
+      auth_keycloak_url: http://{{ serverUrl }}:{{ keycloakPort }}/auth
+      auth_realm: master
+      auth_username: "{{ masterUserName }}"
+      auth_password: "{{ masterPassword }}"
+      realm: "{{ realm }}"
+      client_id: node-test
+      enabled: true
+      protocol: openid-connect
+      root_url: http://{{ serverUrl }}:2000/
+      redirect_uris:
+        - http://{{ serverUrl }}:2000/*
+        - http://{{ serverUrl }}:4000/*
+      admin_url: http://{{ serverUrl }}:2000
+      web_origins:
+        - http://{{ serverUrl }}:2000
+      protocol_mappers:
+        - name: associated_groups #name
+          protocol: openid-connect
+          protocolMapper: oidc-usermodel-attribute-mapper # Mapper Type = User Attribute
+          config:
+            access.token.claim: True
+            claim.name: "associated_groups" # token claim name
+            id.token.claim: True
+            jsonType.label: String
+            user.attribute: associated_groups # user attribute
+            userinfo.token.claim: True
+            multivalued: True
+
+  - name: Create Keycloak client for grafana
+    community.general.keycloak_client:
+      auth_client_id: admin-cli
+      auth_keycloak_url: http://{{ serverUrl }}:{{ keycloakPort }}/auth
+      auth_realm: master
+      auth_username: "{{ masterUserName }}"
+      auth_password: "{{ masterPassword }}"
+      realm: "{{ realm }}"
+      client_id: grafana-test
+      enabled: true
+      protocol: openid-connect
+      clientAuthenticatorType: client-secret
+      publicClient: false
+      directAccessGrantsEnabled: true
+      serviceAccountsEnabled: true
+      standardFlowEnabled: true
+      fullScopeAllowed: true
+      root_url: http://{{ serverUrl }}:3000/
+      redirect_uris:
+        - http://{{ serverUrl }}:3000/*
+        - http://{{ serverUrl }}:3000/*
+      admin_url: http://{{ serverUrl }}:3000
+      web_origins:
+        - http://{{ serverUrl }}:3000
+
+  - name: creaing new role in custom keycloak realm
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh create roles -r {{ realm }} -s name={{ roleName }} -s "description=this is description"'
+  
+  - name: Create Keycloak group
+    community.general.keycloak_group:
+      auth_client_id: admin-cli
+      auth_keycloak_url: http://{{ serverUrl }}:{{ keycloakPort }}/auth
+      auth_realm: master
+      auth_username: "{{ masterUserName }}"
+      auth_password: "{{ masterPassword }}"
+      realm: "{{ realm }}"
+      name: "{{ group }}"
+
+  - name: getting keycloak group ID 
+    command: sudo docker exec -it keycloak bash -c "cd /opt/jboss/keycloak/bin && ./kcadm.sh get -r {{ realm }} groups?search={{ group }} --fields 'id'"
+    register: group_command_output
+      
+  - name: setting groupId variable
+    set_fact:
+      groupId: "{{ group_command_output.stdout }}"
+
+  - name: setting groupId variable
+    set_fact:
+      groupId: "{{ groupId[0]['id'] }}"
+      
+  - name: echoing group ID var variable
+    debug: msg="{{ groupId }}"
+
+  - name: creaing new user in custom keycloak realm
+    command: sudo docker exec -it keycloak bash -c "cd /opt/jboss/keycloak/bin && ./kcadm.sh create users -r {{ realm }} -s username={{ initialUserName }} -s enabled=true -s 'attributes={\"phone\":\"857496 \" , \"associated_groups\":\"{"groupId":"{{ groupId }}", "roleName":"{{ roleName }}"}\"}'"
+
+  - name: setting password for above user
+    command: sudo docker exec -it keycloak bash -c "cd /opt/jboss/keycloak/bin && ./kcadm.sh set-password -r {{ realm }} --username {{ initialUserName }} --new-password {{ initialPassword }}"
+
+  - name: getting keycloak user ID 
+    command: sudo docker exec -it keycloak bash -c "cd /opt/jboss/keycloak/bin && ./kcadm.sh get -r {{ realm }} users?search={{ initialUserName }} --fields 'id'"
+    register: user_command_output
+      
+  - name: setting userID variable
+    set_fact:
+      userId: "{{ user_command_output.stdout }}"
+
+  - name: setting userID variable
+    set_fact:
+      userId: "{{ userId[0]['id'] }}"
+      
+  - name: echoing user ID var variable
+    debug: msg="{{ userId }}"
+
+  - name: updating user with groupId
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh update http://{{ serverUrl }}:{{ keycloakPort }}/auth/admin/realms/{{ realm }}/users/{{ userId }}/groups/{{ groupId }}'
+
+  - name: updating user with role created
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh add-roles -r {{ realm }} --uusername {{ initialUserName }} --rolename {{ roleName }}'
+
+  - name: Update Keycloak group with associated_users attribute
+    community.general.keycloak_group:
+      auth_client_id: admin-cli
+      auth_keycloak_url: http://{{ serverUrl }}:{{ keycloakPort }}/auth
+      auth_realm: master
+      auth_username: "{{ masterUserName }}"
+      auth_password: "{{ masterPassword }}"
+      realm: "{{ realm }}"
+      name: "{{ group }}"
+      attributes:
+        team_location: US
+        ftp_password: ncxxxxx2Ask
+        team_email: test@weare626.com
+        team_address: FA, US
+        associated_users: '{"userID":{{ userId }},"roleName":{{ roleName }}}'
+        ftp_username: EJ9E9
+        team_sublocation: florida
+        team_id: 6
+        ftp_host: "{{ serverUrl }}"
+        folder_uid: xxxxxxxx
+        folder_id: 18
+        team_url: https://test.com
+      state: present

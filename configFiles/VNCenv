@@ -1,0 +1,13 @@
+KeycloakResource=node-test
+
+KeycloakServerUrl=http://52.25.245.212:8080/auth
+
+KeycloakRealm=weare626
+
+#Keycloak URL
+
+KEYCLOAK_URL=http://52.25.245.212:8080
+
+#SERVER URL
+
+SERVER_URL=http://52.25.245.212:4000

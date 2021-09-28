@@ -1,0 +1,159 @@
+---
+- name: 626 services setup
+  hosts: nikhost
+  become: True
+  vars:
+    gitlabUserName: nikthedev
+    gitlabUserPassword: 10118nik
+    localEnvFolder: /home/nikhil/iac_ansible/envfolder
+    remote626ServicesFolder: /home/ubuntu/ansibletest
+
+  tasks:
+  # ------- 626_vncDemo setup --------
+  - name: cloning 626-vncDemo / device-access-server
+    ansible.builtin.git:
+        repo: https://{{ gitlabUserName }}:{{ gitlabUserPassword }}@gitlab.com/weare626/626_vncDemo
+        dest: "{{ remote626ServicesFolder }}/device-access-server"
+        version: stable-authenticated-branch-for-all-apis-vnc-webssh
+
+  - name: Setting up device-access-server
+    community.general.npm:
+        path: "{{ remote626ServicesFolder }}/device-access-server"
+
+  - name: copy VNCenv env file
+    ansible.builtin.copy:
+        src: "{{ localEnvFolder }}/VNCenv"
+        dest: "{{ remote626ServicesFolder }}/device-access-server/.env"
+
+  # ------- AMI dashboard setup --------
+  - name: cloning AMI dasboard
+    ansible.builtin.git:
+        repo: https://{{ gitlabUserName }}:{{ gitlabUserPassword }}@gitlab.com/weare626/amidashboard
+        dest: "{{ remote626ServicesFolder }}/amidashboard"
+        version: dynamic-rendering-branch
+
+  - name: Setting up amidashboard
+    community.general.npm:
+        path: "{{ remote626ServicesFolder }}/amidashboard"
+
+  - name: copy AMIenv env file
+    ansible.builtin.copy:
+        src: "{{ localEnvFolder }}/AMIenv"
+        dest: "{{ remote626ServicesFolder }}/amidashboard/.env"
+
+  - name: correcting port in index.js file of AMI dashboard
+    ansible.builtin.replace:
+       path: "{{ remote626ServicesFolder }}/amidashboard/index.js"
+       regexp: '2000'
+       replace: '8000'
+
+  # ---- setting device-monitoring-server -----
+  - name: cloning device-monitoring-server
+    ansible.builtin.git:
+        repo: https://{{ gitlabUserName }}:{{ gitlabUserPassword }}@gitlab.com/weare626/device-monitoring-server
+        dest: "{{ remote626ServicesFolder }}/device-monitoring-server"
+        version: 59-fixing-a-typo-in-the-device-configuration-which-causes-errors-while-alerting
+
+  - name: Setting up device-monitoring-server
+    community.general.npm:
+        path: "{{ remote626ServicesFolder }}/device-monitoring-server"
+
+  - name: copy DMS env file
+    ansible.builtin.copy:
+        src: "{{ localEnvFolder }}/DMSenv"
+        dest: "{{ remote626ServicesFolder }}/device-monitoring-server/.env"
+
+  - name: copy keycloak.json file
+    ansible.builtin.copy:
+        src: "{{ localEnvFolder }}/DMSkeycloak.json"
+        dest: "{{ remote626ServicesFolder }}/device-monitoring-server/keycloak.json"
+
+  # ----- setting device-monitoring-dashboard -------
+  - name: cloning device-monitoring-dashboard
+    ansible.builtin.git:
+      repo: https://{{ gitlabUserName }}:{{ gitlabUserPassword }}@gitlab.com/weare626/device-monitoring-dashboard
+      dest: "{{ remote626ServicesFolder }}/device-monitoring-dashboard"
+      version: 69-adding-ip-address-field-while-create-and-edit-device-section
+  
+  - name: copy DMD env file
+    ansible.builtin.copy:
+      src: "{{ localEnvFolder }}/DMDenv"
+      dest: "{{ remote626ServicesFolder }}/device-monitoring-dashboard/.env"
+
+  - name: Setting up device-monitoring-dashboard
+    shell: sudo npm i
+    args:
+      chdir: "{{ remote626ServicesFolder }}/device-monitoring-dashboard"
+
+  # - name: Setting up device-monitoring-dashboard
+  #   become: true
+  #   community.general.npm:
+  #      path: "{{ remote626ServicesFolder }}/device-monitoring-dashboard"
+
+  - name: copy keycloak.json file
+    ansible.builtin.copy:
+        src: "{{ localEnvFolder }}/DMDkeycloak.json"
+        dest: "{{ remote626ServicesFolder }}/device-monitoring-dashboard/public/keycloak.json"
+
+  # # ----- setting up 626 Data ingestion with all it's requirements ------
+  - name: cloning Watchman
+    ansible.builtin.git:
+      repo: https://github.com/facebook/watchman
+      dest: "{{ remote626ServicesFolder }}/watchman"
+      version: v4.9.0
+
+  - name: installing dependencies for watchman
+    apt: name={{ item }}
+    loop: [ 'autoconf', 'automake', 'build-essential', 'python-dev', 'libssl-dev', 'libtool', 'm4', 'pkg-config'] 
+
+  - name: setting up watchman
+    command: sudo ./autogen.sh && sudo ./configure && sudo make && sudo make install
+    args:
+      chdir: "{{ remote626ServicesFolder }}/watchman"
+
+  - name: cloning 626-data-ingestion
+    ansible.builtin.git:
+      repo: https://{{ gitlabUserName }}:{{ gitlabUserPassword }}@gitlab.com/weare626/626-data-ingestion
+      dest: "{{ remote626ServicesFolder }}/626-data-ingestion"
+  
+  - name: copy 626-data-ingestion env file
+    ansible.builtin.copy:
+      src: "{{ localEnvFolder }}/dataIngestionEnv"
+      dest: "{{ remote626ServicesFolder }}/626-data-ingestion/.env"
+
+  - name: Setting up 626-data-ingestion
+    community.general.npm:
+      path: "{{ remote626ServicesFolder }}/626-data-ingestion"
+  
+  #-------- Running all the services ----------
+  - name: Installing PM2 package for services running
+    become: true
+    shell: npm -g i pm2
+
+  - name: Stopping & deleting all the PM2 services
+    shell: pm2 stop all && pm2 delete all
+
+  - name: running device-monitoring-server
+    shell: pm2 start "npm run dev" --name device-monitoring-server
+    args:
+      chdir: "{{ remote626ServicesFolder }}/device-monitoring-server"
+
+  - name: running device-monitoring-dashboard
+    shell: pm2 start "npm run start" --name device-monitoring-dashboard
+    args:
+      chdir: "{{ remote626ServicesFolder }}/device-monitoring-dashboard"
+
+  - name: Running device-access-server
+    shell: pm2 start "node index.js" --name device-access-server
+    args:
+      chdir: "{{ remote626ServicesFolder }}/device-access-server"
+
+  - name: Running AMIdashboard
+    shell: pm2 start "node index.js" --name amidashboard
+    args:
+      chdir: "{{ remote626ServicesFolder }}/amidashboard"
+
+  - name: running 626-data-ingestion
+    shell: pm2 start "npm index.js" --name 626-data-ingestion
+    args:
+      chdir: "{{ remote626ServicesFolder }}/626-data-ingestion"

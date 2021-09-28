@@ -1,0 +1,108 @@
+---
+- name: 626 basic dependencies setup
+  hosts: nikhost
+  become: True
+  vars:
+   NODEJS_VERSION: 14.x
+   username: alextest
+   password: alextest
+
+  tasks:
+  - name: Installing mongodb, git, curl
+    apt:
+     update_cache: yes
+     pkg:
+      - mongodb
+      - git
+      - curl
+
+  - name: Installing PPA to get access of packages
+    command: curl -sL https://deb.nodesource.com/setup_{{ NODEJS_VERSION }} -o nodesource_setup.sh
+   
+  - name: Running node installation script
+    command: sudo bash nodesource_setup.sh
+
+  - name: Installing nodejs
+    apt: name=nodejs
+
+  # ----- docker setup --------
+  - name: Install aptitude using apt
+    apt: name=aptitude state=latest update_cache=yes force_apt_get=yes
+
+  - name: Install required system packages
+    apt: name={{ item }} state=latest update_cache=yes
+    loop: ['apt-transport-https', 'ca-certificates', 'gnupg-agent', 'software-properties-common']
+
+  - name: Add Docker GPG apt Key
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add Docker Repository
+    apt_repository:
+      repo: deb https://download.docker.com/linux/ubuntu bionic stable
+      state: present
+
+  - name: Update apt and install docker-packages
+    become: true
+    apt: name={{ item }} state=latest
+    loop: ['containerd.io', 'docker-ce-cli', 'docker-ce', 'python-pip'] 
+
+  - name: Starting Docker service
+    service:
+      name: docker
+      state: started
+      enabled: yes
+  
+  # -------- basic dependency to run docker ------
+  - name: installing pip & docker package
+    become: true 
+    shell: pip install docker
+
+
+  # ------- MongoDB service start up --------
+  - name: creating /data/db directory for Mongo
+    file:
+      path: /data/db
+      state: directory
+      mode: '1777'
+
+  - name: Starting mongod service
+    service:
+      name: mongodb
+      state: started
+
+  # ------ sshd configuration for SFTP ------
+  - name: commenting some lines in /etc/ssh/sshd_config
+    become: true
+    replace:
+      path: /etc/ssh/sshd_config
+      regexp: "{{ item.regexp }}"
+      replace: "{{ item.word }}"
+    loop:
+      - {regexp: 'PasswordAuthentication no', word: 'PasswordAuthentication yes'}
+      - {regexp: 'Subsystem', word: '#Subsystem'}
+
+  - name: adding lines is /etc/ssh/sshd_config
+    become: true
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      line: "{{ item }}"
+      insertbefore: EOF
+    loop: ["Subsystem sftp internal-sftp", "Match Group sftp_users", "ChrootDirectory /home/%u", "ForceCommand internal-sftp"]
+
+  - name: restarting sshd service
+    service:
+      name: sshd
+      state: restarted
+      enabled: yes
+
+  - name: creating group if not exists
+    become: true
+    shell: (getent group sftp_users || groupadd sftp_users)
+
+  # ---- creating a test user for SFTP connection and testing ---
+  # - name: creating user & group
+  #   become: true 
+  #   shell: (getent group sftp_users || groupadd sftp_users) && useradd -g sftp_users -p $(openssl passwd -1 {{ password }}) -s /sbin/nologin {{ username }} && service sshd restart && mkdir /home/{{ username }} && mkdir /home/{{ username }}/ftp && chown {{ username }}:sftp_users /home/{{ username }}/ftp && chmod a-w /home/{{ username }}/ftp && mkdir /home/{{ username }}/ftp/files && chown {{ username }}:sftp_users /home/{{ username }}/ftp/files
+   
