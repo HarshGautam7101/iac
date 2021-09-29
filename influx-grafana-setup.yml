@@ -1,48 +1,79 @@
 ---
 - name: influx & Grafana setup
-  hosts: nikthehostold
+  hosts: '{{ hosts }}'
   become: True
   vars:
-   localEnvFolder: /home/nikhil/iac_ansible/configFiles
-   serverUrl: 18.237.142.14
-   grafanaPort: 3000
-   influxdbPort: 8086
-   keycloakPort: 8080
-   grafanaUser: admin
-   grafanaPassword: admin
-   grafanaAPIkeyName: testkey
-   datasourceName: influxDB
-   influxUser: admin
-   influxPasswordinit: "'weare626'"
-   influxPassword: weare626
-   influxdbName: telegraf
-   influxInitOrg: weare626
-   influxInitBucket: telegraf
-   grafanaOauthClientSecret: d26fffcf-e899-44e2-9e3d-b53046ba8c89
+   localEnvFolder: '{{ playbook_dir }}/envfolder'
+   serverUrl: '{{ serverUrl }}'
+   grafanaPort: '{{ grafanaPort }}'
+   grafanaPortDocker: '{{ grafanaPortDocker }}'
+   influxdbPort: '{{ influxdbPort }}'
+   influxdbPortDocker: '{{ influxdbPortDocker }}'
+   keycloakPort: '{{ keycloakPort }}'
+   grafanaUser: '{{ grafanaUser }}'
+   grafanaPassword: '{{ grafanaPassword }}'
+   grafanaAPIkeyName: '{{ grafanaAPIkeyName }}'
+   datasourceName: '{{ datasourceName }}'
+   influxUser: '{{ influxUser }}'
+   influxPasswordinit: '{{ influxPasswordinit }}'
+   influxPassword: '{{ influxPassword }}'
+   influxdbName: '{{ influxdbName }}'
+   influxInitOrg: '{{ influxInitOrg }}'
+   gitlabUserName: '{{ gitlabUserName }}'
+   gitlabUserPassword: '{{ gitlabUserPassword }}'
+   client_uuid: 370b1176-4ce3-4fc4-90be-47ef1a05bf77
+   masterUserName: '{{ masterUserName }}'
+   masterPassword: '{{ masterPassword }}'
+   protocol: '{{ protocol }}'
 
   tasks:
 
-  # ---- Grafana setup using docker image ----
+  # ---- Grafana setup using custom docker image ----
+
+  - name: Generate access token
+    command: curl http://localhost:{{ keycloakPort }}/auth/realms/master/protocol/openid-connect/token -H "Content-Type:application/x-www-form-urlencoded" -d 'grant_type=password&username={{ masterUserName }}&password={{ masterPassword }}&client_id=admin-cli'
+    register: access_token_output
+
+  - name: Storing Access Token
+    set_fact:
+      access_token: "{{ access_token_output.stdout }}"
+
+  - name: Fetch Client Secret
+    command: curl http://localhost:{{ keycloakPort }}/auth/admin/realms/{{ influxInitOrg }}/clients/{{ client_uuid }}/client-secret -H 'Content-Type:application/json' -H  'Authorization:Bearer {{ access_token['access_token'] }}'
+    register: client_secret_output
+
+  - name: Storing Client Secret
+    set_fact:
+      client_secret: "{{ client_secret_output.stdout }}"
+
+  - name: Log into private registry and force re-authorization
+    docker_login:
+      registry: registry.gitlab.com
+      username: "{{ gitlabUserName }}"
+      password: "{{ gitlabUserPassword }}"
+      reauthorize: yes
+
   - name: Grafana setup
     docker_container:
      name: grafana
-     image: grafana/grafana
+     image: registry.gitlab.com/weare626/626_grafana:prod
+     restart_policy: always
      published_ports:
-      - "{{ grafanaPort }}:{{ grafanaPort }}"
+      - "{{ grafanaPortDocker }}:{{ grafanaPort }}"
      env:
-      GF_SERVER_ROOT_URL: http://{{ serverUrl }}:{{ grafanaPort }}
+      GF_SERVER_ROOT_URL: "{{ protocol }}://{{ serverUrl }}:{{ grafanaPort }}"
       GF_AUTH_GENERIC_OAUTH_CLIENT_ID: grafana-test
-      GF_AUTH_GENERIC_OAUTH_SCOPES: profile
-      GF_AUTH_GENERIC_OAUTH_AUTH_URL: http://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/weare626/protocol/openid-connect/auth
-      GF_AUTH_GENERIC_OAUTH_API_URL: http://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/weare626/protocol/openid-connect/userinfo
+      GF_AUTH_GENERIC_OAUTH_SCOPES: email, profile
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: "{{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/weare626/protocol/openid-connect/auth"
+      GF_AUTH_GENERIC_OAUTH_API_URL: "{{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/weare626/protocol/openid-connect/userinfo"
       GF_AUTH_GENERIC_OAUTH_SEND_CLIENT_CREDENTIALS_VIA_POST: 'true'
       GF_USERS_DEFAULT_THEME: light
       GF_AUTH_GENERIC_OAUTH_ENABLED: 'true'
-      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: http://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/weare626/protocol/openid-connect/token
-      GF_AUTH_SIGNOUT_REDIRECT_URL: http://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/weare626/protocol/openid-connect/logout?redirect_uri=http://{{ serverUrl }}:{{ grafanaPort }}
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: "{{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/weare626/protocol/openid-connect/token"
+      GF_AUTH_SIGNOUT_REDIRECT_URL: "{{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/weare626/protocol/openid-connect/logout?redirect_uri={{ protocol }}://{{ serverUrl }}:{{ grafanaPort }}"
       GF_SERVER_HTTP_PORT: '3000'
       GF_AUTH_GENERIC_OAUTH_NAME: OAuth
-      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: "{{ grafanaOauthClientSecret }}"
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: "{{ client_secret['value'] }}"
       GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: 'true'
       PATH: /usr/share/grafana/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       GF_PATHS_CONFIG: /etc/grafana/grafana.ini
@@ -65,11 +96,11 @@
 
   - name: Running influxdb using command line
     become: true
-    shell: docker run -d --name influxdb -p "{{ influxdbPort }}:{{ influxdbPort }}" -v /home/ubuntu/influxdb.conf:/etc/influxdb/influxdb.conf influxdb:1.8
+    shell: docker run -d --name influxdb --restart=always -p "{{ influxdbPortDocker }}:{{ influxdbPort }}" -v /home/ubuntu/influxdb.conf:/etc/influxdb/influxdb.conf influxdb:1.8
   
   - name: "Create InfluxDB user"
     become: true
-    command: docker exec -it influxdb bash -c "influx -execute \"CREATE USER {{ influxUser }} WITH PASSWORD {{ influxPasswordinit }} WITH ALL PRIVILEGES"\"
+    command: docker exec -it influxdb bash -c "influx -execute \"CREATE USER {{ influxUser }} WITH PASSWORD '{{ influxPasswordinit }}' WITH ALL PRIVILEGES"\"
 
   - name: "Create InfluxDB Database"
     become: true
@@ -79,20 +110,19 @@
   - name: Create influxdb datasource
     community.grafana.grafana_datasource:
       name: "{{ datasourceName }}"
-      grafana_url: "http://{{ serverUrl }}:{{ grafanaPort }}"
+      grafana_url: "{{ protocol }}://{{ serverUrl }}:{{ grafanaPort }}"
       grafana_user: "{{ grafanaUser }}"
       grafana_password: "{{ grafanaPassword }}"
       basic_auth_user: "{{ influxUser }}"
       basic_auth_password: "{{ influxPassword }}"
       org_id: "1"
       ds_type: "influxdb"
-      ds_url: "http://{{ serverUrl }}:{{ influxdbPort }}"
+      ds_url: "{{ protocol }}://{{ serverUrl }}:{{ influxdbPort }}"
       database: "{{ influxdbName }}"
-      # http_method: GET
-      # token: Token o8hWmzHrUAf4p4qk5DCK1vXUPi_e__xBOGKOkxDb1pikoinxmqFpLs3EsustWbpVh2gaIG8BXy8QhryIXqivVw==
+      is_default: "yes"
 
   - name: Generating grafana API key
-    command: curl -X POST -H "Content-Type:application/json" -d '{"name":"{{ grafanaAPIkeyName }}", "role":"Admin"}' http://{{ grafanaUser }}:{{ grafanaPassword }}@{{ serverUrl }}:{{ grafanaPort }}/api/auth/keys
+    command: curl -X POST -H "Content-Type:application/json" -d '{"name":"{{ grafanaAPIkeyName }}", "role":"Admin"}' {{ protocol }}://{{ grafanaUser }}:{{ grafanaPassword }}@{{ serverUrl }}:{{ grafanaPort }}/api/auth/keys
     register: APIresult
 
   - name: Echoing the generated Grafana API key details (Use it in device-monitoring-server env file)

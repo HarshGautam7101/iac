@@ -1,33 +1,48 @@
 ---
 - name: 626 keycloak setup
-  hosts: nikthehostold
+  hosts: '{{ hosts }}'
   become: True
   vars:
-   serverUrl: 18.237.142.14
-   keycloakPort: 8080
-   realm: weare626
-   masterUserName: admin
-   masterPassword: admin
-   group: testGroup
-   initialUserName: adminuser
-   initialPassword: testing
-   roleName: 626-admin
+   serverUrl: '{{ serverUrl }}'
+   keycloakPort: '{{ keycloakPort }}'
+   keycloakPortDocker: '{{ keycloakPortDocker }}'
+   dashboardPort: '{{ dashboardPort }}'
+   serverPort: '{{ serverPort }}'
+   grafanaPort: '{{ grafanaPort }}'
+   realm: '{{ realm }}'
+   masterUserName: '{{ masterUserName }}'
+   masterPassword: '{{ masterPassword }}'
+   group: '{{ group }}'
+   initialFirstName: '{{ initialFirstName }}'
+   initialLastName: '{{ initialLastName }}'
+   initialMobile: '{{ initialMobile }}'
+   initialUserName: '{{ initialUserName }}'
+   initialPassword: '{{ initialPassword }}'
+   initialUserEmail: '{{ initialUserEmail }}'
+   roleName: '{{ roleName }}'
    groupId: ""
    userId: ""
+   client_uuid: 370b1176-4ce3-4fc4-90be-47ef1a05bf77
+   keycloakClientId: '{{ keycloakClientId }}'
+   roleName1: '{{ roleName1 }}'
+   roleName2: '{{ roleName2 }}'
+   roleName3: '{{ roleName3 }}'
+   protocol: '{{ protocol }}'
 
   tasks:
   # ---------- keycloak setup ----------
   - name: running keycloak container on docker
     docker_container:
       name: keycloak
-      image: jboss/keycloak
+      image: jboss/keycloak:4.1.0.Final
+      restart_policy: always
       env:
        KEYCLOAK_USER: "{{ masterUserName }}"
        KEYCLOAK_PASSWORD: "{{ masterPassword }}"
       published_ports:
-        - "{{ keycloakPort }}:{{ keycloakPort }}"
+        - "{{ keycloakPortDocker }}:{{ keycloakPort }}"
         - 8443:8443
-    
+
   # ------ pausing is required to wait keycloack service host properly (takes 2 min usually) -------
   - name: Pausing so that keycloak service hosted properly
     pause:
@@ -39,7 +54,7 @@
 
   # ----- logging in keycloak
   - name: logging in admin-cli
-    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh config credentials --server http://{{ serverUrl }}:{{ keycloakPort }}/auth --realm master --user {{ masterUserName }} --password {{ masterPassword }}'
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh config credentials --server {{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth --realm master --user {{ masterUserName }} --password {{ masterPassword }}'
 
   # ----- keycloak resources creation & setup -------
   - name: creaing new realm in keycloak
@@ -51,21 +66,21 @@
   - name: Create Keycloak client
     community.general.keycloak_client:
       auth_client_id: admin-cli
-      auth_keycloak_url: http://{{ serverUrl }}:{{ keycloakPort }}/auth
+      auth_keycloak_url: "{{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth"
       auth_realm: master
       auth_username: "{{ masterUserName }}"
       auth_password: "{{ masterPassword }}"
       realm: "{{ realm }}"
-      client_id: node-test
+      client_id: "{{ keycloakClientId }}"
       enabled: true
       protocol: openid-connect
-      root_url: http://{{ serverUrl }}:2000/
+      root_url: "{{ protocol }}://{{ serverUrl }}:{{ dashboardPort }}/"
       redirect_uris:
-        - http://{{ serverUrl }}:2000/*
-        - http://{{ serverUrl }}:4000/*
-      admin_url: http://{{ serverUrl }}:2000
+        - "{{ protocol }}://{{ serverUrl }}:{{ dashboardPort }}/*"
+        - "{{ protocol }}://{{ serverUrl }}:{{ serverPort }}/*"
+      admin_url: "{{ protocol }}://{{ serverUrl }}:{{ dashboardPort }}"
       web_origins:
-        - http://{{ serverUrl }}:2000
+        - "{{ protocol }}://{{ serverUrl }}:{{ dashboardPort }}"
       protocol_mappers:
         - name: associated_groups #name
           protocol: openid-connect
@@ -82,11 +97,12 @@
   - name: Create Keycloak client for grafana
     community.general.keycloak_client:
       auth_client_id: admin-cli
-      auth_keycloak_url: http://{{ serverUrl }}:{{ keycloakPort }}/auth
+      auth_keycloak_url: "{{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth"
       auth_realm: master
       auth_username: "{{ masterUserName }}"
       auth_password: "{{ masterPassword }}"
       realm: "{{ realm }}"
+      id: "{{ client_uuid }}"
       client_id: grafana-test
       enabled: true
       protocol: openid-connect
@@ -96,21 +112,30 @@
       serviceAccountsEnabled: true
       standardFlowEnabled: true
       fullScopeAllowed: true
-      root_url: http://{{ serverUrl }}:3000/
+      root_url: "{{ protocol }}://{{ serverUrl }}:{{ grafanaPort }}/"
       redirect_uris:
-        - http://{{ serverUrl }}:3000/*
-        - http://{{ serverUrl }}:3000/*
-      admin_url: http://{{ serverUrl }}:3000
+        - "{{ protocol }}://{{ serverUrl }}:{{ grafanaPort }}/*"
+        - "{{ protocol }}://{{ serverUrl }}:{{ grafanaPort }}/*"
+      admin_url: "{{ protocol }}://{{ serverUrl }}:{{ grafanaPort }}"
       web_origins:
-        - http://{{ serverUrl }}:3000
+        - "{{ protocol }}://{{ serverUrl }}:{{ grafanaPort }}"
 
-  - name: creaing new role in custom keycloak realm
-    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh create roles -r {{ realm }} -s name={{ roleName }} -s "description=this is description"'
-  
+  - name: creaing 626-admin role in custom keycloak realm
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh create roles -r {{ realm }} -s name={{ roleName }} -s "description={{ roleName }}"'
+
+  - name: creaing 626-engineer role in custom keycloak realm
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh create roles -r {{ realm }} -s name={{ roleName1 }} -s "description={{ roleName1 }}"'
+
+  - name: creaing hospital-admin role in custom keycloak realm
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh create roles -r {{ realm }} -s name={{ roleName2 }} -s "description={{ roleName2 }}"'
+
+  - name: creaing hospital-user role in custom keycloak realm
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh create roles -r {{ realm }} -s name={{ roleName3 }} -s "description={{ roleName3 }}"'
+
   - name: Create Keycloak group
     community.general.keycloak_group:
       auth_client_id: admin-cli
-      auth_keycloak_url: http://{{ serverUrl }}:{{ keycloakPort }}/auth
+      auth_keycloak_url: "{{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth"
       auth_realm: master
       auth_username: "{{ masterUserName }}"
       auth_password: "{{ masterPassword }}"
@@ -132,16 +157,25 @@
   - name: echoing group ID var variable
     debug: msg="{{ groupId }}"
 
-  - name: creaing new user in custom keycloak realm
-    command: sudo docker exec -it keycloak bash -c "cd /opt/jboss/keycloak/bin && ./kcadm.sh create users -r {{ realm }} -s username={{ initialUserName }} -s enabled=true -s 'attributes={\"phone\":\"857496 \" , \"associated_groups\":\"{"groupId":"{{ groupId }}", "roleName":"{{ roleName }}"}\"}'"
+  - name: Generate access token
+    command: curl http://{{ serverUrl }}:{{ keycloakPort }}/auth/realms/master/protocol/openid-connect/token -H "Content-Type:application/x-www-form-urlencoded" -d 'grant_type=password&username={{ masterUserName }}&password={{ masterPassword }}&client_id=admin-cli'
+    register: access_token_output
 
-  - name: setting password for above user
-    command: sudo docker exec -it keycloak bash -c "cd /opt/jboss/keycloak/bin && ./kcadm.sh set-password -r {{ realm }} --username {{ initialUserName }} --new-password {{ initialPassword }}"
+  - name: Storing Access Token
+    set_fact:
+      access_token: "{{ access_token_output.stdout }}"
+
+  - name: Create new user in custom keycloak realm
+    command: >-
+      curl --location --request POST 'http://{{ serverUrl }}:{{ keycloakPort }}/auth/admin/realms/{{realm}}/users'
+      --header 'Content-Type: application/json'
+      --header 'Authorization: Bearer {{ access_token['access_token'] }}'
+      --data-raw '{"firstName": "{{ initialFirstName }}", "lastName": "{{ initialLastName }}", "username": "{{ initialUserName }}", "email": "{{ initialUserEmail }}", "enabled": true, "credentials": [{"type": "password", "value":"{{ initialPassword }}", "temporary": false}], "attributes": {"mobile": "{{ initialMobile }}", "associated_groups": "{\"groupId\":\"{{ groupId }}\",\"roleName\":\"{{ roleName }}\"}"}}'
 
   - name: getting keycloak user ID 
     command: sudo docker exec -it keycloak bash -c "cd /opt/jboss/keycloak/bin && ./kcadm.sh get -r {{ realm }} users?search={{ initialUserName }} --fields 'id'"
     register: user_command_output
-      
+
   - name: setting userID variable
     set_fact:
       userId: "{{ user_command_output.stdout }}"
@@ -154,7 +188,7 @@
     debug: msg="{{ userId }}"
 
   - name: updating user with groupId
-    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh update http://{{ serverUrl }}:{{ keycloakPort }}/auth/admin/realms/{{ realm }}/users/{{ userId }}/groups/{{ groupId }}'
+    command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh update {{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth/admin/realms/{{ realm }}/users/{{ userId }}/groups/{{ groupId }}'
 
   - name: updating user with role created
     command: sudo docker exec -it keycloak bash -c 'cd /opt/jboss/keycloak/bin && ./kcadm.sh add-roles -r {{ realm }} --uusername {{ initialUserName }} --rolename {{ roleName }}'
@@ -162,7 +196,7 @@
   - name: Update Keycloak group with associated_users attribute
     community.general.keycloak_group:
       auth_client_id: admin-cli
-      auth_keycloak_url: http://{{ serverUrl }}:{{ keycloakPort }}/auth
+      auth_keycloak_url: "{{ protocol }}://{{ serverUrl }}:{{ keycloakPort }}/auth"
       auth_realm: master
       auth_username: "{{ masterUserName }}"
       auth_password: "{{ masterPassword }}"
@@ -173,7 +207,7 @@
         ftp_password: ncxxxxx2Ask
         team_email: test@weare626.com
         team_address: FA, US
-        associated_users: '{"userID":{{ userId }},"roleName":{{ roleName }}}'
+        associated_users: '{"userID": {{ userId | to_json }},"roleName": {{ roleName | to_json }}}'
         ftp_username: EJ9E9
         team_sublocation: florida
         team_id: 6

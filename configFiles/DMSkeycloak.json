@@ -1,8 +1,0 @@
-{
-    "realm": "weare626",
-    "auth-server-url": "http://52.25.245.212:8080/auth",
-    "ssl-required": "none",
-    "resource": "node-test",
-    "public-client": true,
-    "confidential-port": 0
-  }

@@ -1,11 +1,11 @@
 ---
 - name: 626 basic dependencies setup
-  hosts: nikhost
+  hosts: '{{ hosts }}'
   become: True
   vars:
    NODEJS_VERSION: 14.x
-   username: alextest
-   password: alextest
+   username: '{{ ftpUsername }}'
+   password: '{{ ftpPassword }}'
 
   tasks:
   - name: Installing mongodb, git, curl
@@ -54,6 +54,21 @@
       state: started
       enabled: yes
   
+  # -------- Executing the Docker Command Without Sudo ------
+  - name: Create docker group
+    group:
+      name: docker
+      state: present
+    become: yes
+
+  - name: Add user to the docker group
+    user:
+      name: ubuntu
+      groups: docker
+      append: yes
+    with_items: vagrant
+    become: yes
+
   # -------- basic dependency to run docker ------
   - name: installing pip & docker package
     become: true 
@@ -102,7 +117,7 @@
     shell: (getent group sftp_users || groupadd sftp_users)
 
   # ---- creating a test user for SFTP connection and testing ---
-  # - name: creating user & group
-  #   become: true 
-  #   shell: (getent group sftp_users || groupadd sftp_users) && useradd -g sftp_users -p $(openssl passwd -1 {{ password }}) -s /sbin/nologin {{ username }} && service sshd restart && mkdir /home/{{ username }} && mkdir /home/{{ username }}/ftp && chown {{ username }}:sftp_users /home/{{ username }}/ftp && chmod a-w /home/{{ username }}/ftp && mkdir /home/{{ username }}/ftp/files && chown {{ username }}:sftp_users /home/{{ username }}/ftp/files
+  - name: creating user & group
+    become: true 
+    shell: (getent group sftp_users || groupadd sftp_users) && useradd -g sftp_users -p $(openssl passwd -1 {{ password }}) -s /sbin/nologin {{ username }} && service sshd restart && mkdir /home/{{ username }} && mkdir /home/{{ username }}/ftp && chown {{ username }}:sftp_users /home/{{ username }}/ftp && chmod a-w /home/{{ username }}/ftp && mkdir /home/{{ username }}/ftp/files && chown {{ username }}:sftp_users /home/{{ username }}/ftp/files
    

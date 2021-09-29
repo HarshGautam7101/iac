@@ -1,12 +1,12 @@
 ---
 - name: 626 services setup
-  hosts: nikhost
+  hosts: '{{ hosts }}'
   become: True
   vars:
-    gitlabUserName: nikthedev
-    gitlabUserPassword: 10118nik
-    localEnvFolder: /home/nikhil/iac_ansible/envfolder
-    remote626ServicesFolder: /home/ubuntu/ansibletest
+    gitlabUserName: '{{ gitlabUserName }}'
+    gitlabUserPassword: '{{ gitlabUserPassword }}'
+    localEnvFolder: '{{ playbook_dir }}/envfolder'
+    remote626ServicesFolder: '{{ remote626ServicesFolder }}'
 
   tasks:
   # ------- 626_vncDemo setup --------
@@ -15,6 +15,10 @@
         repo: https://{{ gitlabUserName }}:{{ gitlabUserPassword }}@gitlab.com/weare626/626_vncDemo
         dest: "{{ remote626ServicesFolder }}/device-access-server"
         version: stable-authenticated-branch-for-all-apis-vnc-webssh
+
+  - name: Install chromedriver setup
+    become: true
+    shell: npm install chromedriver --unsafe-perm=true --allow-root
 
   - name: Setting up device-access-server
     community.general.npm:
@@ -65,7 +69,7 @@
 
   - name: copy keycloak.json file
     ansible.builtin.copy:
-        src: "{{ localEnvFolder }}/DMSkeycloak.json"
+        src: "{{ localEnvFolder }}/DMDkeycloak.json"
         dest: "{{ remote626ServicesFolder }}/device-monitoring-server/keycloak.json"
 
   # ----- setting device-monitoring-dashboard -------
@@ -106,10 +110,32 @@
     apt: name={{ item }}
     loop: [ 'autoconf', 'automake', 'build-essential', 'python-dev', 'libssl-dev', 'libtool', 'm4', 'pkg-config'] 
 
-  - name: setting up watchman
-    command: sudo ./autogen.sh && sudo ./configure && sudo make && sudo make install
+  - name: setting up watchman (autogen)
+    become: true
+    command: ./autogen.sh
     args:
       chdir: "{{ remote626ServicesFolder }}/watchman"
+
+  - name: setting up watchman (configure)
+    become: true
+    command: ./configure
+    args:
+      chdir: "{{ remote626ServicesFolder }}/watchman"
+
+  - name: setting up watchman (make)
+    become: true
+    command: make
+    args:
+      chdir: "{{ remote626ServicesFolder }}/watchman"
+
+  - name: setting up watchman (make install)
+    become: true
+    command: make install
+    args:
+      chdir: "{{ remote626ServicesFolder }}/watchman"
+
+  - name: increase inotify watcher (file watch limit)
+    sysctl: name=fs.inotify.max_user_watches value=524288 sysctl_set=yes
 
   - name: cloning 626-data-ingestion
     ansible.builtin.git:
@@ -121,6 +147,12 @@
       src: "{{ localEnvFolder }}/dataIngestionEnv"
       dest: "{{ remote626ServicesFolder }}/626-data-ingestion/.env"
 
+  - name: Give 777 permission to .env
+    become: true
+    command: chmod 777 .env
+    args:
+      chdir: "{{ remote626ServicesFolder }}/626-data-ingestion"
+
   - name: Setting up 626-data-ingestion
     community.general.npm:
       path: "{{ remote626ServicesFolder }}/626-data-ingestion"
@@ -130,30 +162,58 @@
     become: true
     shell: npm -g i pm2
 
-  - name: Stopping & deleting all the PM2 services
-    shell: pm2 stop all && pm2 delete all
+  - name: Create PM2 startup script
+    become_user: root
+    command: env PATH=$PATH:/usr/bin pm2 startup ubuntu -u ubuntu --hp /home/ubuntu
 
   - name: running device-monitoring-server
+    become_user: ubuntu
     shell: pm2 start "npm run dev" --name device-monitoring-server
     args:
       chdir: "{{ remote626ServicesFolder }}/device-monitoring-server"
 
   - name: running device-monitoring-dashboard
-    shell: pm2 start "npm run start" --name device-monitoring-dashboard
+    become_user: ubuntu
+    shell: pm2 start npm --name device-monitoring-dashboard -- start
     args:
       chdir: "{{ remote626ServicesFolder }}/device-monitoring-dashboard"
 
   - name: Running device-access-server
-    shell: pm2 start "node index.js" --name device-access-server
+    become_user: ubuntu
+    shell: pm2 start index.js --name device-access-server
     args:
       chdir: "{{ remote626ServicesFolder }}/device-access-server"
 
   - name: Running AMIdashboard
-    shell: pm2 start "node index.js" --name amidashboard
+    become_user: ubuntu
+    shell: pm2 start index.js --name amidashboard
     args:
       chdir: "{{ remote626ServicesFolder }}/amidashboard"
 
   - name: running 626-data-ingestion
-    shell: pm2 start "npm index.js" --name 626-data-ingestion
+    become_user: ubuntu
+    shell: pm2 start index.js --name 626-data-ingestion
     args:
       chdir: "{{ remote626ServicesFolder }}/626-data-ingestion"
+
+  - name: Pausing so that all services get some time to run and come online properly
+    pause:
+      minutes: 1
+
+  - name: List all the services
+    become_user: ubuntu
+    shell: pm2 list
+    register: pm2_service_list_output
+
+  - name: Extracting List output
+    become_user: ubuntu
+    set_fact:
+      list: "{{ pm2_service_list_output.stdout }}"
+
+  - name: Echoing List
+    become_user: ubuntu
+    debug: msg="{{ list.split('\n') }}"
+
+  - name: Save PM2 configuration
+    become_user: ubuntu
+    command: pm2 save
